@@ -261,10 +261,7 @@ class TuyaBLELock(TuyaBLEEntity, LockEntity):
             + unlock_info
         )
 
-        _LOGGER.debug(
-            "YR05 DP71 unlock payload: %s",
-            payload.hex(),
-        )
+        _LOGGER.debug("YR05 DP71 authenticated unlock request prepared")
 
         return payload
 
