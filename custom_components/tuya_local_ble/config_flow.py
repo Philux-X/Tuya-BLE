@@ -43,6 +43,15 @@ class TuyaBLEConfigFlow(ConfigFlow, domain=DOMAIN):
         self._manager: HASSTuyaBLEDeviceManager | None = None
         self._get_device_info_error = False
 
+    async def async_step_user(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Handle manual setup."""
+        if self._manager is None:
+            self._manager = HASSTuyaBLEDeviceManager(self.hass, self._data)
+
+        return await self.async_step_device(user_input)
+
     async def async_step_bluetooth(
         self, discovery_info: BluetoothServiceInfoBleak
     ) -> ConfigFlowResult:

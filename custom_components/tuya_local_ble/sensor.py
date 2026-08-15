@@ -219,6 +219,9 @@ mapping: dict[str, TuyaBLECategorySensorMapping] = {
                     ],
                 ),
             ],
+            "hhxgpozj": [  # YR05 / H13 new-chip lock
+                TuyaBLEBatteryMapping(dp_id=8),
+            ],
         }
     ),      
     "szjqr": TuyaBLECategorySensorMapping(

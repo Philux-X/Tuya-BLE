@@ -175,6 +175,20 @@ mapping: dict[str, TuyaBLECategorySwitchMapping] = {
             ),
         }
     ),
+    "jtmspro": TuyaBLECategorySwitchMapping(
+        products={
+            "hhxgpozj": [  # YR05 / H13 new-chip lock
+                TuyaBLESwitchMapping(
+                    dp_id=101,
+                    description=SwitchEntityDescription(
+                        key="normal_open_switch",
+                        name="Passage Mode",
+                        icon="mdi:lock-open-variant",
+                    ),
+                ),
+            ],
+        },
+    ),    
     "szjqr": TuyaBLECategorySwitchMapping(
         products={
             **dict.fromkeys(

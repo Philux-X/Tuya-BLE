@@ -205,6 +205,10 @@ devices_database: dict[str, TuyaBLECategoryInfo] = {
             TuyaBLEProductInfo(
                 name="Raykube A1 Ultra",
             ),
+            "hhxgpozj":  # YR05 / H13 new-chip lock
+            TuyaBLEProductInfo(
+                name="YR05 Smart Lock",
+            ),
         },
     ),    
     "szjqr": TuyaBLECategoryInfo(
