@@ -22,7 +22,7 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 
-from .const import DOMAIN
+from .const import DOMAIN, YR05_IDLE_DISCONNECT_DELAY
 from .devices import TuyaBLEData, TuyaBLEEntity, TuyaBLEProductInfo
 from .tuya_ble import TuyaBLEDataPointType, TuyaBLEDevice
 
@@ -197,6 +197,12 @@ class TuyaBLELock(TuyaBLEEntity, LockEntity):
             time.sleep(self._mapping.keep_connect_timer)
 
 
+    def _schedule_yr05_idle_disconnect(self) -> None:
+        """Schedule idle disconnect after a completed YR05 command lifecycle."""
+        if self._device.product_id == "hhxgpozj":
+            self._device.schedule_idle_disconnect(YR05_IDLE_DISCONNECT_DELAY)
+
+
     def _build_yr05_unlock_payload(self) -> bytes:
         """Build authenticated DP71 unlock request for the YR05."""
 
@@ -337,6 +343,7 @@ class TuyaBLELock(TuyaBLEEntity, LockEntity):
             # Clear the request so a repeated coordinator update
             # cannot process the same failure again.
             self._yr05_unlock_request = None
+            self._schedule_yr05_idle_disconnect()
 
 
     @property
@@ -536,6 +543,7 @@ class TuyaBLELock(TuyaBLEEntity, LockEntity):
                     )
 
                 self._yr05_unlock_request = None
+                self._schedule_yr05_idle_disconnect()
 
             elif (
                 self._commanded_timer is not None
@@ -565,6 +573,7 @@ class TuyaBLELock(TuyaBLEEntity, LockEntity):
                         )
 
                 self._yr05_unlock_request = None
+                self._schedule_yr05_idle_disconnect()
 
 
     @callback
@@ -581,6 +590,11 @@ class TuyaBLELock(TuyaBLEEntity, LockEntity):
         """Return if entity is available."""
 
         if self._device.product_id == "hc7n0urm":
+            return True
+        if (
+            self._device.product_id == "hhxgpozj"
+            and self._device.is_intentionally_idle
+        ):
             return True
 
         result = super().available

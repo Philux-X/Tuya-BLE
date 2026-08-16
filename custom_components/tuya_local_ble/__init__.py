@@ -15,7 +15,7 @@ from homeassistant.exceptions import ConfigEntryNotReady
 from .tuya_ble import TuyaBLEDevice
 
 from .keyman import HASSTuyaBLEDeviceManager
-from .const import DOMAIN
+from .const import DOMAIN, YR05_IDLE_DISCONNECT_DELAY
 from .devices import TuyaBLECoordinator, TuyaBLEData, get_device_product_info
 
 PLATFORMS: list[Platform] = [
@@ -60,6 +60,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     #hass.async_create_task(device.update())
 
     await device.update()
+    if device.product_id == "hhxgpozj":
+        device.schedule_idle_disconnect(YR05_IDLE_DISCONNECT_DELAY)
     
     @callback
     def _async_update_ble(

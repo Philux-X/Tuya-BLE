@@ -227,6 +227,10 @@ class TuyaBLEDevice:
         self._connect_lock = asyncio.Lock()
         self._client: BleakClientWithServiceCache | None = None
         self._expected_disconnect = False
+        self._idle_disconnect_expected = False
+        self._idle_disconnect_task: asyncio.Task[None] | None = None
+        self._idle_disconnect_generation = 0
+        self._is_intentionally_idle = False
         self._connected_callbacks: list[Callable[[], None]] = []
         self._callbacks: list[Callable[[list[TuyaBLEDataPoint]], None]] = []
         self._disconnected_callbacks: list[Callable[[], None]] = []
@@ -433,6 +437,11 @@ class TuyaBLEDevice:
         """Get datapoints exposed by device."""
         return self._datapoints
 
+    @property
+    def is_intentionally_idle(self) -> bool:
+        """Return whether the device was intentionally disconnected for idle."""
+        return self._is_intentionally_idle
+
     def get_or_create_datapoint(
         self,
         id: int,
@@ -512,6 +521,17 @@ class TuyaBLEDevice:
                 self.rssi,
             )
             return
+        if self._idle_disconnect_expected:
+            self._client = None
+            self._is_intentionally_idle = True
+            self._idle_disconnect_expected = False
+            _LOGGER.debug(
+                "%s: Intentional idle disconnect completed; RSSI: %s",
+                self.address,
+                self.rssi,
+            )
+            return
+        self._is_intentionally_idle = False
         self._client = None
         _LOGGER.debug(
             "%s: Device unexpectedly disconnected; RSSI: %s",
@@ -529,6 +549,95 @@ class TuyaBLEDevice:
     def _disconnect(self) -> None:
         """Disconnect from device."""
         asyncio.create_task(self._execute_timed_disconnect())
+
+    def schedule_idle_disconnect(self, delay: float) -> None:
+        """Schedule a non-terminal idle disconnect."""
+        if self._expected_disconnect:
+            return
+
+        self.cancel_idle_disconnect()
+        self._idle_disconnect_generation += 1
+        generation = self._idle_disconnect_generation
+        _LOGGER.debug(
+            "%s: Scheduling idle disconnect in %s seconds",
+            self.address,
+            delay,
+        )
+        self._idle_disconnect_task = asyncio.create_task(
+            self._execute_idle_disconnect(delay, generation)
+        )
+
+    def cancel_idle_disconnect(self) -> None:
+        """Cancel a pending idle disconnect."""
+        if self._idle_disconnect_expected:
+            return
+
+        task = self._idle_disconnect_task
+        if task and not task.done():
+            _LOGGER.debug("%s: Cancelling idle disconnect", self.address)
+            task.cancel()
+        self._idle_disconnect_task = None
+        self._idle_disconnect_generation += 1
+
+    async def _execute_idle_disconnect(self, delay: float, generation: int) -> None:
+        """Disconnect after an idle delay without entering terminal stop state."""
+        task = asyncio.current_task()
+        try:
+            await asyncio.sleep(delay)
+            if generation != self._idle_disconnect_generation:
+                return
+            async with self._operation_lock:
+                async with self._connect_lock:
+                    if generation != self._idle_disconnect_generation:
+                        return
+                    if self._expected_disconnect:
+                        return
+                    if self._input_expected_responses:
+                        _LOGGER.debug(
+                            "%s: Postponing idle disconnect; response pending",
+                            self.address,
+                        )
+                        if self._idle_disconnect_task is task:
+                            self._idle_disconnect_task = None
+                        self.schedule_idle_disconnect(delay)
+                        return
+
+                    client = self._client
+                    self._idle_disconnect_expected = True
+                    self._is_intentionally_idle = True
+                    self._is_paired = False
+                    self._client = None
+
+                    if not client or not client.is_connected:
+                        self._idle_disconnect_expected = False
+                        return
+
+                    _LOGGER.debug(
+                        "%s: Performing intentional idle disconnect",
+                        self.address,
+                    )
+                    try:
+                        await client.stop_notify(self._characteristic_notify)
+                    except BLEAK_EXCEPTIONS:
+                        _LOGGER.debug(
+                            "%s: Idle disconnect stop_notify failed",
+                            self.address,
+                            exc_info=True,
+                        )
+                    try:
+                        await client.disconnect()
+                    except BLEAK_EXCEPTIONS:
+                        self._idle_disconnect_expected = False
+                        _LOGGER.debug(
+                            "%s: Idle disconnect failed",
+                            self.address,
+                            exc_info=True,
+                        )
+        except asyncio.CancelledError:
+            raise
+        finally:
+            if self._idle_disconnect_task is task:
+                self._idle_disconnect_task = None
 
     async def _execute_timed_disconnect(self) -> None:
         """Execute timed disconnection."""
@@ -569,6 +678,9 @@ class TuyaBLEDevice:
         global global_connect_lock
         if self._expected_disconnect:
             return
+        if self._is_intentionally_idle:
+            _LOGGER.debug("%s: Reconnecting from intentional idle", self.address)
+        self.cancel_idle_disconnect()
         if self._connect_lock.locked():
             _LOGGER.debug(
                 "%s: Connection already in progress,"
@@ -582,6 +694,8 @@ class TuyaBLEDevice:
             # Check again while holding the lock
             await asyncio.sleep(0.01)
             if self._client and self._client.is_connected and self._is_paired:
+                self._idle_disconnect_expected = False
+                self._is_intentionally_idle = False
                 return
             attempts_count = 100
             while attempts_count > 0:
@@ -699,6 +813,8 @@ class TuyaBLEDevice:
             if self._client.is_connected:
                 if self._is_paired:
                     _LOGGER.debug("%s: Successfully connected", self.address)
+                    self._idle_disconnect_expected = False
+                    self._is_intentionally_idle = False
                     self._fire_connected_callbacks()
                 else:
                     _LOGGER.error("%s: Connected but not paired", self.address)

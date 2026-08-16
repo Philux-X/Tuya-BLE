@@ -16,7 +16,7 @@ from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 
-from .const import DOMAIN
+from .const import DOMAIN, YR05_IDLE_DISCONNECT_DELAY
 from .devices import TuyaBLEData, TuyaBLEEntity, TuyaBLEProductInfo
 from .tuya_ble import TuyaBLEDataPointType, TuyaBLEDevice
 
@@ -384,6 +384,16 @@ class TuyaBLESwitch(TuyaBLEEntity, SwitchEntity):
         super().__init__(hass, coordinator, device, product, mapping.description)
         self._mapping = mapping
 
+    async def _async_set_value_and_schedule_idle_disconnect(
+        self,
+        datapoint: Any,
+        value: bool | bytes,
+    ) -> None:
+        """Set a switch value and schedule YR05 idle disconnect after write."""
+        await datapoint.set_value(value)
+        if self._device.product_id == "hhxgpozj" and self._mapping.dp_id == 101:
+            self._device.schedule_idle_disconnect(YR05_IDLE_DISCONNECT_DELAY)
+
     @property
     def is_on(self) -> bool:
         """Return true if switch is on."""
@@ -432,7 +442,15 @@ class TuyaBLESwitch(TuyaBLEEntity, SwitchEntity):
             )
             new_value = True
         if datapoint:
-            self._hass.create_task(datapoint.set_value(new_value))
+            if self._device.product_id == "hhxgpozj" and self._mapping.dp_id == 101:
+                self._hass.create_task(
+                    self._async_set_value_and_schedule_idle_disconnect(
+                        datapoint,
+                        new_value,
+                    )
+                )
+            else:
+                self._hass.create_task(datapoint.set_value(new_value))
 
     def turn_off(self, **kwargs: Any) -> None:
         """Turn the switch off."""
@@ -459,7 +477,15 @@ class TuyaBLESwitch(TuyaBLEEntity, SwitchEntity):
             )
             new_value = False
         if datapoint:
-            self._hass.create_task(datapoint.set_value(new_value))
+            if self._device.product_id == "hhxgpozj" and self._mapping.dp_id == 101:
+                self._hass.create_task(
+                    self._async_set_value_and_schedule_idle_disconnect(
+                        datapoint,
+                        new_value,
+                    )
+                )
+            else:
+                self._hass.create_task(datapoint.set_value(new_value))
 
     @property
     def available(self) -> bool:
