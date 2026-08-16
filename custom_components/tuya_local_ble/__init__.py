@@ -1,9 +1,13 @@
 """The Tuya BLE integration."""
 from __future__ import annotations
 
+import asyncio
 import logging
 
-from bleak_retry_connector import BLEAK_RETRY_EXCEPTIONS as BLEAK_EXCEPTIONS, get_device
+from bleak_retry_connector import (
+    BLEAK_RETRY_EXCEPTIONS as BLEAK_EXCEPTIONS,
+    get_device,
+)
 
 from homeassistant.components import bluetooth
 from homeassistant.components.bluetooth.match import ADDRESS, BluetoothCallbackMatcher
@@ -15,7 +19,7 @@ from homeassistant.exceptions import ConfigEntryNotReady
 from .tuya_ble import TuyaBLEDevice
 
 from .keyman import HASSTuyaBLEDeviceManager
-from .const import DOMAIN, YR05_IDLE_DISCONNECT_DELAY
+from .const import DOMAIN, YR05_IDLE_DISCONNECT_DELAY, YR05_UPDATE_TIMEOUT
 from .devices import TuyaBLECoordinator, TuyaBLEData, get_device_product_info
 
 PLATFORMS: list[Platform] = [
@@ -31,6 +35,7 @@ PLATFORMS: list[Platform] = [
 ]
 
 _LOGGER = logging.getLogger(__name__)
+YR05_STARTUP_UPDATE_EXCEPTIONS = BLEAK_EXCEPTIONS
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Tuya BLE from a config entry."""
@@ -59,9 +64,25 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     '''
     #hass.async_create_task(device.update())
 
-    await device.update()
     if device.product_id == "hhxgpozj":
+        try:
+            await asyncio.wait_for(device.update(), timeout=YR05_UPDATE_TIMEOUT)
+        except asyncio.TimeoutError:
+            _LOGGER.warning(
+                "YR05 initial state update timed out after %s seconds; "
+                "continuing setup",
+                YR05_UPDATE_TIMEOUT,
+            )
+        except YR05_STARTUP_UPDATE_EXCEPTIONS as ex:
+            _LOGGER.warning(
+                "YR05 initial state update failed; continuing setup: %s",
+                ex,
+            )
+        else:
+            _LOGGER.debug("YR05 initial state update completed")
         device.schedule_idle_disconnect(YR05_IDLE_DISCONNECT_DELAY)
+    else:
+        await device.update()
     
     @callback
     def _async_update_ble(

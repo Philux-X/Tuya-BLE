@@ -591,10 +591,7 @@ class TuyaBLELock(TuyaBLEEntity, LockEntity):
 
         if self._device.product_id == "hc7n0urm":
             return True
-        if (
-            self._device.product_id == "hhxgpozj"
-            and self._device.is_intentionally_idle
-        ):
+        if self._device.product_id == "hhxgpozj":
             return True
 
         result = super().available

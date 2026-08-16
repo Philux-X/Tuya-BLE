@@ -263,6 +263,8 @@ class TuyaBLEDevice:
         self._input_expected_responses: dict[int,
                                              asyncio.Future[int] | None] = {}
         # self._input_future: asyncio.Future[int] | None = None
+        self._yr05_status_observation_active = False
+        self._yr05_status_observation_ids: list[int] = []
 
         self._datapoints = TuyaBLEDataPoints(self)
 
@@ -299,9 +301,36 @@ class TuyaBLEDevice:
             TuyaBLECode.FUN_SENDER_PAIR, self._build_pairing_request()
         )
 
-    async def update(self) -> None:
+    async def update(self, observe_datapoints: bool = False) -> None:
         _LOGGER.debug("%s: Updating", self.address)
-        await self._send_packet(TuyaBLECode.FUN_SENDER_DEVICE_STATUS, bytes())
+        if not observe_datapoints or self.product_id != "hhxgpozj":
+            await self._send_packet(TuyaBLECode.FUN_SENDER_DEVICE_STATUS, bytes())
+            return
+
+        if self._expected_disconnect:
+            return
+        await self._ensure_connected()
+        if self._expected_disconnect:
+            return
+
+        self._yr05_status_observation_active = True
+        self._yr05_status_observation_ids = []
+        _LOGGER.debug("YR05 DEVICE_STATUS refresh observation started")
+        try:
+            await self._send_packet_while_connected(
+                TuyaBLECode.FUN_SENDER_DEVICE_STATUS,
+                bytes(),
+                0,
+                True,
+            )
+        finally:
+            observed_ids = sorted(set(self._yr05_status_observation_ids))
+            _LOGGER.debug(
+                "YR05 DEVICE_STATUS refresh observed datapoint ids: %s",
+                observed_ids if observed_ids else "none",
+            )
+            self._yr05_status_observation_active = False
+            self._yr05_status_observation_ids = []
 
     async def _update_device_info(self) -> bool:
         if self._device_info is None:
@@ -720,6 +749,8 @@ class TuyaBLEDevice:
                             use_services_cache=True,
                             ble_device_callback=lambda: self._ble_device,
                         )
+                except asyncio.CancelledError:
+                    raise
                 except BleakNotFoundError:
                     _LOGGER.error(
                         "%s: device not found, not in range, or poor RSSI: %s",
@@ -733,7 +764,7 @@ class TuyaBLEDevice:
                         "%s: communication failed", self.address, exc_info=True
                     )
                     continue
-                except:
+                except Exception:
                     _LOGGER.debug("%s: unexpected error",
                                   self.address, exc_info=True)
                     continue
@@ -749,7 +780,9 @@ class TuyaBLEDevice:
                             self._notification_handler,
                             bluez={"use_start_notify": True},
                         )
-                    except:  # [BLEAK_EXCEPTIONS, BleakNotFoundError]:
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception:  # [BLEAK_EXCEPTIONS, BleakNotFoundError]:
                         self._client = None
                         _LOGGER.error("%s: starting notifications failed",
                                       self.address, exc_info=True)
@@ -776,7 +809,9 @@ class TuyaBLEDevice:
                                 self.address,
                             )
                             continue
-                    except:  # [BLEAK_EXCEPTIONS, BleakNotFoundError]:
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception:  # [BLEAK_EXCEPTIONS, BleakNotFoundError]:
                         self._client = None
                         _LOGGER.error("%s: Sending device info request failed",
                                       self.address, exc_info=True)
@@ -799,7 +834,9 @@ class TuyaBLEDevice:
                                 self.address,
                             )
                             continue
-                    except:  # [BLEAK_EXCEPTIONS, BleakNotFoundError]:
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception:  # [BLEAK_EXCEPTIONS, BleakNotFoundError]:
                         self._client = None
                         _LOGGER.error("%s: Sending pairing request failed",
                                       self.address, exc_info=True)
@@ -1011,18 +1048,21 @@ class TuyaBLEDevice:
             )
         packets: list[bytes] = self._build_packets(
             seq_num, code, data, response_to)
-        await self._int_send_packet_while_connected(packets)
-        if future:
-            try:
-                await asyncio.wait_for(future, RESPONSE_WAIT_TIMEOUT)
-            except asyncio.TimeoutError:
-                _LOGGER.error(
-                    "%s: timeout receiving response, RSSI: %s",
-                    self.address,
-                    self.rssi,
-                )
-                result = False
-            self._input_expected_responses.pop(seq_num, None)
+        try:
+            await self._int_send_packet_while_connected(packets)
+            if future:
+                try:
+                    await asyncio.wait_for(future, RESPONSE_WAIT_TIMEOUT)
+                except asyncio.TimeoutError:
+                    _LOGGER.error(
+                        "%s: timeout receiving response, RSSI: %s",
+                        self.address,
+                        self.rssi,
+                    )
+                    result = False
+        finally:
+            if future:
+                self._input_expected_responses.pop(seq_num, None)
 
         return result
 
@@ -1108,7 +1148,9 @@ class TuyaBLEDevice:
                         packet,
                         False,
                     )
-                except:
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
                     _LOGGER.error(
                         "%s: Error during sending packet",
                         self.address,
@@ -1176,6 +1218,21 @@ class TuyaBLEDevice:
             return "<redacted DP71 raw value>"
         return value
 
+    def _observe_yr05_status_datapoint(
+        self,
+        dp_id: int,
+        dp_type: TuyaBLEDataPointType,
+    ) -> None:
+        """Log datapoint ids received during a manual YR05 status refresh."""
+        if not self._yr05_status_observation_active:
+            return
+        self._yr05_status_observation_ids.append(dp_id)
+        _LOGGER.debug(
+            "YR05 DEVICE_STATUS refresh received datapoint id: %s, type: %s",
+            dp_id,
+            dp_type.name,
+        )
+
     def _parse_datapoints_v3(
         self, timestamp: float, flags: int, data: bytes, start_pos: int
     ) -> int:
@@ -1213,6 +1270,7 @@ class TuyaBLEDevice:
                 type.name,
                 self._format_datapoint_value_for_log(id, value),
             )
+            self._observe_yr05_status_datapoint(id, type)
             self._datapoints._update_from_device(
                 id, timestamp, flags, type, value)
             datapoints.append(self._datapoints[id])
@@ -1269,6 +1327,7 @@ class TuyaBLEDevice:
                 type.name,
                 self._format_datapoint_value_for_log(id, value),
             )
+            self._observe_yr05_status_datapoint(id, type)
             if self.product_id != "hc7n0urm":
                 self._datapoints._update_from_device(id, time.time(), flags, type, value)
                 datapoints.append(self._datapoints[id])
