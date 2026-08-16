@@ -64,6 +64,31 @@ This document captures the current known-good YR05/H13 local BLE lock control wo
 - Intentional disconnect occurs cleanly about 30 seconds later.
 - DP19 value `1` was observed after the successful BLE unlock.
 
+### Confirmed Hardware Observations: Startup With YR05 Unavailable
+
+- With the YR05 unavailable during Home Assistant startup, the initial `DEVICE_STATUS` attempt is bounded to 15 seconds.
+- After the timeout, config-entry setup continues normally.
+- The previous multi-minute Home Assistant bootstrap stall is eliminated.
+- YR05 controls remain available and commandable even when the initial connection fails.
+
+### Confirmed Hardware Observations: Refresh State
+
+- Refresh State successfully reconnects and authenticates from intentional idle.
+- Refresh State sends `DEVICE_STATUS` without actuating the lock.
+- The immediate `DEVICE_STATUS` response did not contain DP47.
+- The first instrumentation window reported no datapoints because useful YR05 datapoints arrived a few seconds later.
+- After reconnect, delayed datapoints included DP8, DP31, DP28, DP33, and DP36.
+- A DP12 value `100` fingerprint event that occurred while Home Assistant was disconnected was delivered after reconnect.
+- In this test, no DP13 event was observed.
+- In this test, no DP47 was delivered, so Refresh State did not recover the current physical cylinder state.
+- The normal 30-second intentional idle disconnect still occurred correctly after Refresh.
+
+### Conclusions From Current Refresh Testing
+
+- `DEVICE_STATUS` polling should not currently be treated as a reliable DP47 state-resynchronization mechanism.
+- Periodic polling is not recommended yet because this test did not show reliable physical cylinder-state recovery.
+- Do not conclude that PIN events are never buffered; this single test is insufficient.
+
 ### Current Transport State
 
 - Existing A201/FD50 support is present.
@@ -89,6 +114,8 @@ These items are not yet confirmed and should be tested with logs or controlled e
 - Advertisement and wake behavior after the lock has slept.
 - Whether pending datapoints are retained while HA is disconnected.
 - Whether physical events are recovered after reconnect.
+- Whether DP13 PIN/password events are buffered and delivered after reconnect.
+- Whether any safe protocol query can reliably request or recover DP47 after a disconnected physical/manual action.
 - How the official Tuya gateway manages connection ownership and idle disconnect.
 - Appropriate idle disconnect timeout for reliable commands, phone coexistence, and battery life.
 - Whether startup Unknown state can be improved without inventing state or misusing DP101.
