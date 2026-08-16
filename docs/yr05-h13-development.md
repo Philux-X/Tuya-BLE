@@ -48,6 +48,21 @@ This document captures the current known-good YR05/H13 local BLE lock control wo
 - Battery reporting using DP8.
 - Passage Mode switch using DP101.
 - Physical lock-state updates using DP47.
+- YR05-only idle BLE disconnect and reconnect-on-command lifecycle.
+
+### Confirmed Hardware Observations: Idle Disconnect Lifecycle
+
+- Startup connects and authenticates normally.
+- Startup schedules the 30-second idle release after the initial successful update.
+- Intentional idle disconnect works.
+- The Home Assistant lock entity remains available while intentionally disconnected.
+- The phone app can connect while Home Assistant is idle.
+- Home Assistant Lock reconnects on demand and succeeds through DP46 with DP47 reporting `False`.
+- A pending idle timer is cancelled when another Home Assistant command arrives.
+- Home Assistant Unlock succeeds through authenticated DP71 with result `0x00` and DP47 reporting `True`.
+- A new idle timer is scheduled after command completion.
+- Intentional disconnect occurs cleanly about 30 seconds later.
+- DP19 value `1` was observed after the successful BLE unlock.
 
 ### Current Transport State
 
@@ -61,11 +76,11 @@ This document captures the current known-good YR05/H13 local BLE lock control wo
 - Never commit `devices.json`.
 - Never commit `local_key`, actual `ble_unlock_check` values, device UUIDs, addresses, IDs, or other private runtime credentials.
 - Avoid adding new logs that include full sensitive DP71 transaction payloads.
-- Current known-good baseline still contains a debug log of the full DP71 payload. Treat removal or redaction of that log as a hardening item, not part of the preserved baseline capture.
+- The preserved `yr05-known-good-local-control` baseline tag contains a debug log of the full DP71 payload. Current development hardens DP71 logging; keep treating DP71 transaction material as sensitive.
 
 ## Main Unresolved Engineering Problem
 
-Home Assistant currently holds the BLE connection. While HA owns the connection, the phone app cannot connect to the lock. This may also affect battery life. The goal is a connect-on-demand and disconnect-when-idle lifecycle if it can be done without breaking reliable local lock/unlock, DP47 state recovery, or existing FD50/Raykube behavior.
+The original problem was that Home Assistant held the BLE connection continuously. While HA owned the connection, the phone app could not connect to the lock, and there was possible battery impact. The current YR05-only idle-disconnect experiment has been hardware-tested for basic lock/unlock and phone coexistence, but longer-term battery behavior, missed-event behavior, and reconnect robustness still need observation.
 
 ## Open Questions And Hypotheses
 

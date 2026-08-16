@@ -1166,6 +1166,16 @@ class TuyaBLEDevice:
         )
         return (timestamp, end_pos)
 
+    @staticmethod
+    def _format_datapoint_value_for_log(
+        dp_id: int,
+        value: bytes | bool | int | str,
+    ) -> bytes | bool | int | str:
+        """Return a log-safe datapoint value."""
+        if dp_id == 71:
+            return "<redacted DP71 raw value>"
+        return value
+
     def _parse_datapoints_v3(
         self, timestamp: float, flags: int, data: bytes, start_pos: int
     ) -> int:
@@ -1201,7 +1211,7 @@ class TuyaBLEDevice:
                 self.address,
                 id,
                 type.name,
-                value,
+                self._format_datapoint_value_for_log(id, value),
             )
             self._datapoints._update_from_device(
                 id, timestamp, flags, type, value)
@@ -1257,7 +1267,7 @@ class TuyaBLEDevice:
                 self.address,
                 id,
                 type.name,
-                value,
+                self._format_datapoint_value_for_log(id, value),
             )
             if self.product_id != "hc7n0urm":
                 self._datapoints._update_from_device(id, time.time(), flags, type, value)
@@ -1649,7 +1659,7 @@ class TuyaBLEDevice:
                 self.address,
                 dp.id,
                 dp.type.name,
-                dp.value,
+                self._format_datapoint_value_for_log(dp.id, dp.value),
             )
             data += pack(">BBB", dp.id, int(dp.type.value), len(value))
             data += value
